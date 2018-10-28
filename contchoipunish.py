@@ -1,7 +1,10 @@
 import numpy as np
 import copy
 from typing import Iterable
-import sys
+import gzip
+from pathlib import Path
+import argparse
+from os import makedirs
 
 
 def dummy_log(*args, **kwargs): pass
@@ -21,9 +24,9 @@ class Agent:
         self.coef = 1
         self.prev_punish = 0
         self.knows_partner = 0
-        self.leave = 0
+        self.trueleave = False
         self.truecoop = 0
-        self.spite = 0
+        self.truespite = 0
         if type(hlayers_sizes) == Agent:
             agent = hlayers_sizes
             self.hlayers_sizes = copy.deepcopy(agent.hlayers_sizes)
@@ -40,6 +43,15 @@ class Agent:
     def fake(self):
         return self.coef != 1
 
+    @property
+    def leave(self):
+        global PARTNER_CONTROL
+        return self.trueleave and not PARTNER_CONTROL
+
+    @property
+    def spite(self):
+        return self.truespite
+
     def init_layers(self, hlayers_sizes):
         self.layers = []
         true_hlayers_sizes = [4] + hlayers_sizes + [3]  # input = bias + prev_coop + prev_punish + knows_partner
@@ -47,14 +59,19 @@ class Agent:
             self.layers.append(np.random.uniform(-1, 1, size=(noutput, ninput)))
 
     def step_decision(self):
-        input = np.array([1, self.prev_coop, self.prev_punish, self.knows_partner])
+        global PARTNER_INTERACTION
+        if not PARTNER_INTERACTION:
+            seen_coop = 0
+        else:
+            seen_coop = self.prev_coop
+        input = np.array([1, seen_coop, self.prev_punish, self.knows_partner])
         output = None
         for layer in self.layers:
             output = np.tanh(layer @ input)
             input = output
-        self.leave = output[0] > 0
+        self.trueleave = output[0] > 0
         self.truecoop = (output[1] + 1) / 2 * 10
-        self.spite = (output[2] + 1) / 2 * 10
+        self.truespite = (output[2] + 1) / 2 * 10
 
     def mutate(self):
         il = np.random.choice(len(self.layers))
@@ -88,8 +105,6 @@ leave: {self.leave}
 def create_pairs(pool_set: Iterable[Agent], beta : float):
     new_pairs = []
     pool = list(pool_set)
-    if len(pool) == 2:
-        logi("Only two guys in the pool, this is useless")
     alone_pool = set()
     np.random.shuffle(pool)
     for i in range(0, len(pool), 2):
@@ -123,19 +138,24 @@ nbstep = 500
 popsize = 100
 nbruns = 10
 nbfakes = popsize//2
+PARTNER_CONTROL = True
+PARTNER_INTERACTION = True
+logdir = Path('.')
 
 def main():
 
     population = [Agent(i, [5]) for i in range(popsize)]
-    runlogf = open('runlog.txt', 'w')
-    print("gen,run,step,pair,agent,fake,coop,punish,knows,ownCoop,ownPunish,leave", file=runlogf)
 
-    fitnesslogf = open('fitnesslog.txt', 'w')
+    fitnesslogf = gzip.open(logdir / 'fitnesslog.txt.gz', 'wt')
     print("gen,agent,fitness", file=fitnesslogf)
     for igen in range(nbgens):
         fakeswap = False
-        fakes = np.array([True] * (nbfakes) + [False] * (popsize - nbfakes))
+        fakes = np.array([True] * nbfakes + [False] * (popsize - nbfakes))
         log = (igen + 1) % 100 == 0
+        if log:
+            runlogf = gzip.open(logdir / f'runlog_{igen+1}.txt.gz', 'wt')
+            print("gen,run,step,pair,agent,fake,coop,punish,knows,ownCoop,ownPunish,leave", file=runlogf)
+
         ########
         # RUNS #
         ########
@@ -214,16 +234,20 @@ def main():
             # before starting a new run, let's flush the logs
             if log:
                 runlogf.flush()
+            # end steps
         # end runs
+        if log:
+            runlogf.close()
         fitnesses = np.array([agent.fitness for agent in population])
         for agent in population:
             print(igen, agent.id, agent.fitness, sep=',', file=fitnesslogf, flush=False)
         fitnesslogf.flush()
         i_max = np.argmax(fitnesses)
-        print(population[i_max].fulldesc())
+        logi(population[i_max].fulldesc())
         print(igen, np.min(fitnesses), np.median(fitnesses), np.max(fitnesses))
         min_fit = np.min(fitnesses)
-        if min_fit >= 0: min_fit = -1
+        if min_fit >= 0:
+            min_fit = -1
         fitnesses -= min_fit
         sumfit = np.sum(fitnesses)
         parents = np.random.choice(population, size=popsize, p=fitnesses/sumfit, replace=True)
@@ -231,5 +255,16 @@ def main():
         np.random.choice(population).mutate()
     runlogf.close()
     fitnesslogf.close()
+
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--no-partner-choice", action="store_false", dest="partner_control")
+ap.add_argument("--no-partner-interaction", action="store_false", dest="partner_interaction")
+ap.add_argument("-d", "--dir", type=Path, default=Path('.'))
+args = ap.parse_args()
+PARTNER_INTERACTION = args.partner_interaction
+PARTNER_CONTROL = args.partner_control
+logdir = args.dir
+makedirs(logdir, exist_ok=True)
 
 main()
