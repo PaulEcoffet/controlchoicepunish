@@ -259,7 +259,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--no-partner-choice", action="store_true", dest="partner_control")
 ap.add_argument("--no-partner-interaction", action="store_false", dest="partner_interaction")
 ap.add_argument("-d", "--dir", type=Path, default=Path('.'))
-ap.add_argument("-v", "--verbosity", action="count")
+ap.add_argument("-v", "--verbosity", action="count", default=0)
 args = ap.parse_args()
 PARTNER_INTERACTION = args.partner_interaction
 PARTNER_CONTROL = args.partner_control
