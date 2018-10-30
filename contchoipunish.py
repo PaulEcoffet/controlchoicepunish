@@ -5,14 +5,8 @@ import gzip
 from pathlib import Path
 import argparse
 from os import makedirs
-
-
-def dummy_log(*args, **kwargs): pass
-
-
-logi = print
-loge = print
-logd = dummy_log
+import time
+import logging
 
 
 class Agent:
@@ -58,17 +52,17 @@ class Agent:
         for ninput, noutput in zip(true_hlayers_sizes, true_hlayers_sizes[1:]):
             self.layers.append(np.random.uniform(-1, 1, size=(noutput, ninput)))
 
+
     def step_decision(self):
         global PARTNER_INTERACTION
         if not PARTNER_INTERACTION:
             seen_coop = 0
         else:
-            seen_coop = self.prev_coop
-        input = np.array([1, seen_coop, self.prev_punish, self.knows_partner])
-        output = None
+            seen_coop = self.prev_coop / 10
+        seen_punish = self.prev_punish / 10
+        output = np.array([1, seen_coop, seen_punish, self.knows_partner])
         for layer in self.layers:
-            output = np.tanh(layer @ input)
-            input = output
+            output = np.tanh(layer @ output)
         self.trueleave = output[0] > 0
         self.truecoop = (output[1] + 1) / 2 * 10
         self.truespite = (output[2] + 1) / 2 * 10
@@ -77,7 +71,7 @@ class Agent:
         il = np.random.choice(len(self.layers))
         ir = np.random.choice(len(self.layers[il]))
         ic = np.random.choice(len(self.layers[il][ir]))
-        self.layers[il][ir][ic] = np.random.uniform(-10, 10)
+        self.layers[il][ir][ic] = np.random.uniform(-5, 5)
 
     def clear_inputs(self):
         self.knows_partner = 0
@@ -86,14 +80,13 @@ class Agent:
 
     def fulldesc(self):
         return f"""Agent {self.id}
-fake: {self.fake}
+coef: {self.coef} (fake : {self.fake})
 knows_partner: {self.knows_partner}
 prev_coop: {self.prev_coop}
 prev_punish: {self.prev_punish}
-coop: {self.coop}
+coop: {self.coop} (true: {self.truecoop})
 punish: {self.spite}
-leave: {self.leave}
-"""
+leave: {self.leave}"""
 
     def __str__(self):
         return f"agent {self.id}"
@@ -118,11 +111,11 @@ def create_pairs(pool_set: Iterable[Agent], beta : float):
 
 
 def payoff(agent, pair):
+    global a, b
     n = len(pair)
     x = agent.coop
     x0 = sum(o_agent.coop for o_agent in pair if o_agent != agent)
     res = (a * (x + x0) + b * x0) / n - 1/2*x*x
-    # print(f"p({x}, {x0}, {n}) = {res}")
     return res
 
 
@@ -136,10 +129,10 @@ beta = 1
 nbgens = 10000
 nbstep = 500
 popsize = 100
-nbruns = 10
+nbruns = 6
 nbfakes = popsize//2
-PARTNER_CONTROL = True
-PARTNER_INTERACTION = True
+PARTNER_CONTROL = False
+PARTNER_INTERACTION = False
 logdir = Path('.')
 
 def main():
@@ -148,6 +141,10 @@ def main():
 
     fitnesslogf = gzip.open(logdir / 'fitnesslog.txt.gz', 'wt')
     print("gen,agent,fitness", file=fitnesslogf)
+    fitnesslogf.close()
+    ###############
+    # GENERATIONS #
+    ###############
     for igen in range(nbgens):
         fakeswap = False
         fakes = np.array([True] * nbfakes + [False] * (popsize - nbfakes))
@@ -189,7 +186,7 @@ def main():
                 leavers = set()
                 if log:
                     for agent in alone_pool:
-                        print(igen, irun, step, -1, agent.id, 0, 0, 0, 0, 0, 0,
+                        print(igen, irun, step, -1, agent.id, agent.fake, 0, 0, 0, 0, 0, 0,
                               sep=", ", file=runlogf, flush=False)
 
                 for i_pair, pair in enumerate(pairs):
@@ -202,21 +199,21 @@ def main():
                                   agent.leave, sep=", ", file=runlogf, flush=False)
                     # Leave is prioritized on other actions
                     if any(agent.leave for agent in pair):
-                        logd(f"pair {i_pair} with {pair[0].id} and {pair[1].id} breaks")
+                        logging.debug(f"pair {i_pair} with {pair[0].id} and {pair[1].id} breaks")
                         for agent in pair:
                             agent.clear_inputs()
                             leavers.add(agent)
                     else:  # If they play
                         next_pairs.append(pair)
-                        logd(f"pair {i_pair} with {pair[0].id} and {pair[1].id} plays")
+                        logging.debug(f"pair {i_pair} with {pair[0].id} and {pair[1].id} plays")
                         total_coop = 0
                         total_spite = 0
                         for agent in pair:
-                            logd(f"agent {agent.id} plays {agent.coop} and gains {payoff(agent, pair)}")
+                            logging.debug(f"agent {agent.id} plays {agent.coop} and gains {payoff(agent, pair)}")
                             if not agent.fake:
                                 agent.fitness += payoff(agent, pair)
                             total_coop += agent.coop
-                            logd(f"agent {agent.id} spite {agent.spite}")
+                            logging.debug(f"agent {agent.id} spite {agent.spite}")
                             if not agent.fake:
                                 agent.fitness -= agent.spite
                             total_spite += agent.spite
@@ -239,11 +236,12 @@ def main():
         if log:
             runlogf.close()
         fitnesses = np.array([agent.fitness for agent in population])
+        fitnesslogf = gzip.open(logdir / 'fitnesslog.txt.gz', 'at')
         for agent in population:
             print(igen, agent.id, agent.fitness, sep=',', file=fitnesslogf, flush=False)
-        fitnesslogf.flush()
+        fitnesslogf.close()
         i_max = np.argmax(fitnesses)
-        logi(population[i_max].fulldesc())
+        logging.info(population[i_max].fulldesc())
         print(igen, np.min(fitnesses), np.median(fitnesses), np.max(fitnesses))
         min_fit = np.min(fitnesses)
         if min_fit >= 0:
@@ -252,18 +250,20 @@ def main():
         sumfit = np.sum(fitnesses)
         parents = np.random.choice(population, size=popsize, p=fitnesses/sumfit, replace=True)
         population = [Agent(i, agent) for i, agent in enumerate(parents)]
-        np.random.choice(population).mutate()
+        [agent.mutate() for agent in np.asarray(np.random.choice(population, size=(1,)))]
     runlogf.close()
     fitnesslogf.close()
 
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--no-partner-choice", action="store_false", dest="partner_control")
+ap.add_argument("--no-partner-choice", action="store_true", dest="partner_control")
 ap.add_argument("--no-partner-interaction", action="store_false", dest="partner_interaction")
 ap.add_argument("-d", "--dir", type=Path, default=Path('.'))
+ap.add_argument("-v", "--verbosity", action="count")
 args = ap.parse_args()
 PARTNER_INTERACTION = args.partner_interaction
 PARTNER_CONTROL = args.partner_control
+logging.basicConfig(level=int(40-args.verbosity*10))
 logdir = args.dir
 makedirs(logdir, exist_ok=True)
 
