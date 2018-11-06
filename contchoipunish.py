@@ -1,13 +1,13 @@
 import numpy as np
 import copy
-from typing import Iterable
+from typing import Iterable, Tuple
 import gzip
 from pathlib import Path
 import argparse
 from os import makedirs
 import time
 import logging
-
+import pickle
 
 class Agent:
     def __init__(self, id, hlayers_sizes):
@@ -95,7 +95,7 @@ leave: {self.leave}"""
         return f"agent {self.id}"
 
 
-def create_pairs(pool_set: Iterable[Agent], beta : float):
+def create_pairs(pool_set: Iterable, beta: float) -> Tuple:
     new_pairs = []
     pool = list(pool_set)
     alone_pool = set()
@@ -106,7 +106,6 @@ def create_pairs(pool_set: Iterable[Agent], beta : float):
         else:
             alone_pool.add(pool[i])
             alone_pool.add(pool[i+1])
-
     return new_pairs, alone_pool
 
 
@@ -114,7 +113,7 @@ def payoff(agent, pair):
     global a, b
     n = len(pair)
     x = agent.coop
-    x0 = sum(o_agent.coop for o_agent in pair if o_agent != agent)
+    x0 = np.sum([agent.coop for o_agent in pair if o_agent != agent])
     res = (a * (x + x0) + b * x0) / n - 1/2*x*x
     return res
 
@@ -127,16 +126,17 @@ a = 5
 b = 3
 beta = 1
 nbgens = 10000
-nbstep = 500
+nbstep = 5000
 popsize = 100
-nbruns = 6
-nbfakes = popsize//2
+propfakes = 2
+nbruns = 4
+nbfakes = popsize//propfakes
 PARTNER_CONTROL = False
 PARTNER_INTERACTION = False
 logdir = Path('.')
 
-def main():
 
+def main():
     population = [Agent(i, [5]) for i in range(popsize)]
 
     fitnesslogf = gzip.open(logdir / 'fitnesslog.txt.gz', 'wt')
@@ -146,35 +146,38 @@ def main():
     # GENERATIONS #
     ###############
     for igen in range(nbgens):
-        fakeswap = False
-        fakes = np.array([True] * nbfakes + [False] * (popsize - nbfakes))
-        log = (igen + 1) % 100 == 0
+        fakes = np.array([0] * popsize)
+        np.random.shuffle(fakes)
+        log = (igen + 1) % 1000 == 0
         if log:
-            runlogf = gzip.open(logdir / f'runlog_{igen+1}.txt.gz', 'wt')
+            runlogf = gzip.open(logdir.joinpath(f'runlog_{igen+1}.txt.gz'), 'wt')
             print("gen,run,step,pair,agent,fake,coop,punish,knows,ownCoop,ownPunish,leave", file=runlogf)
+            with gzip.open(logdir.joinpath(f'genlog_{igen+1}.pkz'), 'wb') as genlogf:
+                pickle.dump(population, genlogf)
+
 
         ########
         # RUNS #
         ########
-        for irun in range(nbruns):
+        for irun in range(nbruns * propfakes):
             alone_pool = set(population)
             pairs = []
-            if fakeswap:
-                fakes = ~fakes  # invert every true and false
-            else:
+            if np.all(fakes == 2):
+                fakes = np.array([1] * nbfakes + [0] * (popsize - nbfakes))
                 np.random.shuffle(fakes)
-
+            else:
+                to_do = np.random.choice([i for i in range(len(fakes)) if fakes[i] == 0], nbfakes, replace=False)
+                fakes[to_do] = 1
             nbfakesdone = 0
             fakelistiter = list(zip(population, fakes))
             np.random.shuffle(fakelistiter)
             for agent, isfake in fakelistiter:
                 agent.clear_inputs()
-                if isfake:
+                if isfake == 1:
                     agent.coef = nbfakesdone / (nbfakes - 1) * 2
                     nbfakesdone += 1
                 else:
                     agent.coef = 1
-            fakeswap = not fakeswap
             #########
             # STEPS #
             #########
@@ -199,21 +202,17 @@ def main():
                                   agent.leave, sep=", ", file=runlogf, flush=False)
                     # Leave is prioritized on other actions
                     if any(agent.leave for agent in pair):
-                        logging.debug(f"pair {i_pair} with {pair[0].id} and {pair[1].id} breaks")
                         for agent in pair:
                             agent.clear_inputs()
                             leavers.add(agent)
                     else:  # If they play
                         next_pairs.append(pair)
-                        logging.debug(f"pair {i_pair} with {pair[0].id} and {pair[1].id} plays")
                         total_coop = 0
                         total_spite = 0
                         for agent in pair:
-                            logging.debug(f"agent {agent.id} plays {agent.coop} and gains {payoff(agent, pair)}")
                             if not agent.fake:
                                 agent.fitness += payoff(agent, pair)
                             total_coop += agent.coop
-                            logging.debug(f"agent {agent.id} spite {agent.spite}")
                             if not agent.fake:
                                 agent.fitness -= agent.spite
                             total_spite += agent.spite
@@ -228,18 +227,21 @@ def main():
                 # Removing broken appart pairs, and adding the agent to the pool
                 alone_pool |= leavers
                 pairs = next_pairs
+            # end steps
+
             # before starting a new run, let's flush the logs
             if log:
                 runlogf.flush()
-            # end steps
+
+            fakes[fakes == 1] = 2  # All fakes are now already passed
         # end runs
+        assert(np.sum(fakes == 0) == 0)
         if log:
             runlogf.close()
         fitnesses = np.array([agent.fitness for agent in population])
-        fitnesslogf = gzip.open(logdir / 'fitnesslog.txt.gz', 'at')
-        for agent in population:
-            print(igen, agent.id, agent.fitness, sep=',', file=fitnesslogf, flush=False)
-        fitnesslogf.close()
+        with gzip.open(logdir.joinpath('fitnesslog.txt.gz'), 'at') as fitnesslogf:
+            for agent in population:
+                print(igen, agent.id, agent.fitness, sep=',', file=fitnesslogf, flush=False)
         i_max = np.argmax(fitnesses)
         logging.info(population[i_max].fulldesc())
         print(igen, np.min(fitnesses), np.median(fitnesses), np.max(fitnesses))
@@ -250,7 +252,7 @@ def main():
         sumfit = np.sum(fitnesses)
         parents = np.random.choice(population, size=popsize, p=fitnesses/sumfit, replace=True)
         population = [Agent(i, agent) for i, agent in enumerate(parents)]
-        [agent.mutate() for agent in np.asarray(np.random.choice(population, size=(1,)))]
+        [agent.mutate() for agent in np.asarray(np.random.choice(population, size=(100,)))]
     runlogf.close()
     fitnesslogf.close()
 
