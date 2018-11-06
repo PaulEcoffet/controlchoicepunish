@@ -118,26 +118,9 @@ def payoff(agent, pair):
     return res
 
 
-#########
-# Const #
-#########
-
-a = 5
-b = 3
-beta = 1
-nbgens = 10000
-nbstep = 5000
-popsize = 100
-propfakes = 2
-nbruns = 4
-nbfakes = popsize//propfakes
-PARTNER_CONTROL = False
-PARTNER_INTERACTION = False
-logdir = Path('.')
-
-
 def main():
     population = [Agent(i, [5]) for i in range(popsize)]
+    nbfakes = popsize // propfakes
 
     fitnesslogf = gzip.open(logdir / 'fitnesslog.txt.gz', 'wt')
     print("gen,agent,fitness", file=fitnesslogf)
@@ -159,7 +142,7 @@ def main():
         ########
         # RUNS #
         ########
-        for irun in range(nbruns * propfakes):
+        for irun in range(nbruns):
             alone_pool = set(population)
             pairs = []
             if np.all(fakes == 2):
@@ -257,16 +240,40 @@ def main():
     fitnesslogf.close()
 
 
+
+#########
+# Const #
+#########
+
+a = 5
+b = 3
+beta = 1
+nbgens = 10000
+nbstep = 5000
+popsize = 100
+propfakes = 2
+nbruns = 4
+PARTNER_CONTROL = False
+PARTNER_INTERACTION = False
+logdir = Path('.')
+
+
+
 ap = argparse.ArgumentParser()
 ap.add_argument("--no-partner-choice", action="store_true", dest="partner_control")
 ap.add_argument("--no-partner-interaction", action="store_false", dest="partner_interaction")
 ap.add_argument("-d", "--dir", type=Path, default=Path('.'))
 ap.add_argument("-v", "--verbosity", action="count", default=0)
+ap.add_argument("--prop-fakes", type=int, default=2)
+ap.add_argument("--nbruns", type=int, default=4)
 args = ap.parse_args()
 PARTNER_INTERACTION = args.partner_interaction
 PARTNER_CONTROL = args.partner_control
 logging.basicConfig(level=int(40-args.verbosity*10))
 logdir = args.dir
+propfakes = args.prop_fakes
+nbruns = args.nbruns
+assert(nbruns % propfakes == 0)
 makedirs(logdir, exist_ok=True)
 
 main()
