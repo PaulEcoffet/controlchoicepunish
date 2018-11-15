@@ -61,6 +61,7 @@ class Agent:
             seen_coop = self.prev_coop / 10
         seen_punish = self.prev_punish / 10
         output = np.array([1, seen_coop, seen_punish, self.knows_partner])
+        print(output)
         for layer in self.layers:
             output = np.tanh(layer @ output)
         self.trueleave = output[0] > 0
@@ -129,8 +130,8 @@ def main():
     # GENERATIONS #
     ###############
     for igen in range(nbgens):
+        start = time.time()
         fakes = np.array([0] * popsize)
-        np.random.shuffle(fakes)
         log = (igen + 1) % 1000 == 0
         if log:
             runlogf = gzip.open(logdir.joinpath(f'runlog_{igen+1}.txt.gz'), 'wt')
@@ -235,7 +236,8 @@ def main():
         sumfit = np.sum(fitnesses)
         parents = np.random.choice(population, size=popsize, p=fitnesses/sumfit, replace=True)
         population = [Agent(i, agent) for i, agent in enumerate(parents)]
-        [agent.mutate() for agent in np.asarray(np.random.choice(population, size=(100,)))]
+        [agent.mutate() for agent in np.asarray(np.random.choice(population, size=(1,)))]
+        print(time.time() - start)
     runlogf.close()
     fitnesslogf.close()
 
