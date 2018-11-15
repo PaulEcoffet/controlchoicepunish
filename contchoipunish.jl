@@ -49,6 +49,7 @@ end
     nbruns::Int = 4
     nbsteps::Int = 5000
     popsize::Int = 100
+    fakeprop::Int = 2
     maxcoop::Float64 = 30
     nbmut::Int = 1
     logdir::String = "."
@@ -136,14 +137,17 @@ function main(conf::Conf)
     nbruns = conf.nbruns
     nbsteps = conf.nbsteps
     beta = conf.beta
+    fakeprop = conf.fakeprop
     a = conf.a
     b = conf.b
     logdir = conf.logdir
 
+    @assert (nbruns % fakeprop == 0) "nbruns should be a multiple of fakeprop so that each robot is fake the same amount of runs"
+
     mkpath(logdir)
 
     population = Agent[]
-    nbfakes = div(popsize, 2)
+    nbfakes = div(popsize, fakeprop)
     GZip.open("$logdir/fitnesslog.txt.gz", "w") do ffit
             for agent in population
                 write(ffit, "gen, agent, fitness\n")
@@ -241,6 +245,7 @@ function main(conf::Conf)
             end # step
             fakes[fakes .== 1] .= 2
         end # run
+        @assert all(fakes .== 2) "not all robots has been faked at the end"
         fitnesses = Float64[agent.fitness for agent in population]
         GZip.open("$logdir/fitnesslog.txt.gz", "a") do ffit
             for agent in population
@@ -289,6 +294,9 @@ s = ArgParseSettings()
     "--nbmut"
         arg_type = Int
         default = 1
+    "--fakeprop"
+        arg_type = Int
+        default = 2
 end
 
 parsed_args = parse_args(ARGS, s)
@@ -300,7 +308,8 @@ conf = Conf(nbgens=parsed_args["nbgens"],
             nbruns=parsed_args["nbruns"],
             nbsteps=parsed_args["nbsteps"],
             popsize=parsed_args["popsize"],
-            nbmut=parsed_args["nbmut"])
+            nbmut=parsed_args["nbmut"],
+            fakeprop=parsed_args["fakeprop"])
 main(conf)
 
 
